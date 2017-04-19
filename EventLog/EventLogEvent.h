@@ -1,14 +1,14 @@
-#ifndef EVENT_H
-#define EVENT_H
+#ifndef EVENT_LOG_EVENT_H
+#define EVENT_LOG_EVENT_H
 
 #include <time.h>
 
-class Event {
+class EventLogEvent {
 public:
     // Get the time and log the data;
-    Event();
-    Event(int value);
-    Event(time_t time, int value);
+    EventLogEvent();
+    EventLogEvent(int value);
+    EventLogEvent(time_t time, int value);
     
     bool loadFromString(char* str);
     int toString(char* buffer, size_t size);

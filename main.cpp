@@ -2,19 +2,32 @@
 #include <stdio.h>
 #include "SDBlockDevice.h"
 #include "FATFileSystem.h"
+#include "EventLog/EventLog.h"
+#include "EventLog/EventLogEvent.h"
+#include "ntp-client/NTPClient.h"
+#include "ESP8266Interface.h"
 
 SDBlockDevice sdBlockDevice(PTE3, PTE1, PTE2, PTE4);
 FATFileSystem fs("fs");
-InterruptIn button(SW2);
+InterruptIn log_button(SW2);
+InterruptIn ntp_button(SW3);
+ESP8266Interface wifi(D1, D0);
 
-volatile bool clicked = false;
+volatile bool log_event = false;
+volatile bool ntp_event = false;
+bool timeValid = false;
 
-void button_clicked() {
-    clicked = true;
+void log_button_clicked() {
+    log_event = true;
+}
+
+void ntp_button_clicked() {
+    ntp_event = true;
 }
 
 int main()
 {
+    NTPClient ntp(&wifi);
     int error;
     printf("Mounting the filesystem\r\n");
     error = fs.mount(&sdBlockDevice);
@@ -38,35 +51,56 @@ int main()
     }
     
     printf("Filesystem mounted\r\n");
+    EventLog eventLog("/fs/events");
     
-    button.rise(&button_clicked);
+    log_button.fall(&log_button_clicked);
+    ntp_button.fall(&ntp_button_clicked);
     
     printf("waiting for interrupt\r\n");
     unsigned int counter = 0;
     char buff[30];
     while (true) {
-        if (clicked == true) {
-            clicked = false;
+        if (log_event) {
+            log_event = false;
             printf("motion detected! %d\r\n", counter);
-            time_t seconds = time(NULL);
-            int stringLength = snprintf(buff, 30, "%u, %u\r\n", seconds, counter);
-            FILE* fd = fopen("/fs/events.txt", "a");
-            
-            if (fd) {
-                int writtenBytes = fwrite(buff, 1, stringLength, fd);
-                
-                if (writtenBytes != stringLength) {
-                    printf("Expected to write %d bytes, but actually wrote %d bytes\r\n", stringLength, writtenBytes);
-                }
-                
-                if (fclose(fd) < 0) {
-                    printf("Failed to close '/fs/events.txt'\r\n");
-                }
+            EventLogEvent event((int)counter);
+            printf("Created event\r\n");
+            event.setTimeValid(timeValid);
+            eventLog.log(&event);
+            printf("Logged Event\r\n");
+            counter++;
+            printf("Finished logging motion\r\n");
+        }
+        
+        if (ntp_event) {
+            ntp_event = false;
+            printf("Attempting to set time via NTP\r\n");
+            int result = wifi.connect("AndroidAP", "mbedchina2016", NSAPI_SECURITY_WPA_WPA2);
+            if (result == 0) {
+                printf("Connected to wifi\r\n");
             } else {
-                printf("Failed to open '/fs/events.txt'\r\n");
+                printf("Failed to connect to wifi with error %d\r\n", result);
+                continue;
             }
             
-            counter++;        
+            time_t timestamp;
+            
+            for (int i = 0; i < 3; i++) {
+                timestamp = ntp.get_timestamp();
+                if (timestamp < 0) {
+                    printf("An error occurred when getting the time. Code: %ld. Retrying\r\n", timestamp);
+                } else {
+                    printf("Got time\r\n");
+                    set_time(timestamp);
+                    timeValid = true;
+                    break;
+                }
+            }
+            
+            wifi.disconnect();
+            
+            time(&timestamp);
+            printf("Current time is %s\r\n", ctime(&timestamp));
         }
    }
 }
